@@ -1,0 +1,7 @@
+{
+  "name": "FluentTeacher AI",
+  "description": "An advanced English fluency coach designed to help users reach IELTS-level proficiency through structured lessons, assessments, and daily plans.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
