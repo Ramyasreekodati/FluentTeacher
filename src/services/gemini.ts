@@ -5,7 +5,15 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 export const model = "gemini-3-flash-preview";
 export const ttsModel = "gemini-2.5-flash-preview-tts";
 
-export async function generateResponse(prompt: string, systemInstruction?: string, imageBase64?: string, audioBase64?: string) {
+export async function generateResponse(
+  prompt: string, 
+  systemInstruction?: string, 
+  imageBase64?: string, 
+  audioBase64?: string,
+  fileBase64?: string,
+  fileMimeType?: string,
+  responseMimeType?: "application/json" | "text/plain"
+) {
   try {
     const parts: any[] = [{ text: prompt }];
     
@@ -27,11 +35,21 @@ export async function generateResponse(prompt: string, systemInstruction?: strin
       });
     }
 
+    if (fileBase64 && fileMimeType) {
+      parts.push({
+        inlineData: {
+          mimeType: fileMimeType,
+          data: fileBase64.split(',')[1] || fileBase64
+        }
+      });
+    }
+
     const response = await ai.models.generateContent({
       model,
       contents: [{ parts }],
       config: {
         systemInstruction: systemInstruction || "You are FluentTeacher AI, an advanced English fluency coach.",
+        responseMimeType: responseMimeType || "text/plain",
       },
     });
     return response.text;

@@ -1,121 +1,156 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Book, ChevronRight, HelpCircle, CheckCircle2, ArrowLeft, Loader2, Sparkles, Zap, Mic } from 'lucide-react';
+import { 
+  Book, 
+  ChevronRight, 
+  HelpCircle, 
+  CheckCircle2, 
+  ArrowLeft, 
+  Loader2, 
+  Sparkles, 
+  Zap, 
+  Mic, 
+  Volume2, 
+  Play, 
+  Pause, 
+  RotateCcw,
+  AlertCircle,
+  XCircle,
+  Info
+} from 'lucide-react';
 import Markdown from 'react-markdown';
 import { generateResponse } from '../services/gemini';
+import { EXERCISES } from '../data/exercises';
+import { Exercise, Question } from '../types';
 
 function cn(...inputs: any[]) {
   return inputs.filter(Boolean).join(' ');
 }
 
-const IELTS_SYSTEM_PROMPT = `
-You are an IELTS trainer using the book: "202 Useful Exercises for IELTS".
-Your goal is NOT to explain everything.
-Your goal is to train the user to answer correctly by thinking first.
-
-### 🔴 STRICT RULE: DO NOT SKIP ANY CONTENT
-* Use the book exactly.
-* Do not remove or simplify questions.
-* Keep original structure (fill blanks, MCQs, True/False, etc.).
-
-### 🧠 LEARNING METHOD
-Follow this sequence strictly:
-
-1. SHOW ORIGINAL EXERCISE
-* Present questions exactly like in the book.
-* End with: "Try to answer. Tell me when you are ready."
-
-2. FORCE THINKING (ACTIVE RECALL)
-* Ask the user to answer first.
-* Do NOT show answers immediately.
-
-3. HINT MODE (IF NEEDED)
-* If user asks for help, give small hints only.
-* Do NOT reveal answers.
-
-4. SHOW CORRECT ANSWERS
-* After user attempts.
-* Provide correct answers clearly.
-
-5. EXPLAIN WHY
-* Explain why correct and why wrong.
-
-6. MEMORY REINFORCEMENT
-* Repeat key points.
-* Give 1–2 similar examples.
-
-7. MICRO REVISION
-* Ask 2–3 quick questions again.
-
-### 🔁 CONTINUITY RULE (IMPORTANT)
-* Maintain current progress in the book.
-* When the user says "next", move to the next exercise/topic in order (1.1 -> 1.2 -> 1.3 ... -> Part 2 -> etc.).
-* Do NOT repeat previous content.
-* Do NOT ask what to do next.
-* Continue sequentially exactly as in the book.
-`;
-
 interface ExerciseViewProps {
   onBack: () => void;
+  exerciseIndex: number;
+  onComplete: () => void;
 }
 
-const ExerciseView: React.FC<ExerciseViewProps> = ({ onBack }) => {
-  const [currentExercise, setCurrentExercise] = useState('1.1');
-  const [content, setContent] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [userResponse, setUserResponse] = useState('');
-  const [phase, setPhase] = useState<'exercise' | 'evaluation'>('exercise');
+const ExerciseView: React.FC<ExerciseViewProps> = ({ onBack, exerciseIndex, onComplete }) => {
+  const [exercise, setExercise] = useState<Exercise>(EXERCISES[exerciseIndex] || EXERCISES[0]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [results, setResults] = useState<Record<string, boolean>>({});
+  const [score, setScore] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [tutorFeedback, setTutorFeedback] = useState<string | null>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    fetchExercise();
-  }, [currentExercise]);
+    const currentExercise = EXERCISES[exerciseIndex] || EXERCISES[0];
+    setExercise(currentExercise);
+    setAnswers({});
+    setShowFeedback(false);
+    setResults({});
+    setScore(0);
+    setIsPlaying(false);
+    setTutorFeedback(null);
+    setAudioProgress(0);
+  }, [exerciseIndex]);
 
-  const fetchExercise = async () => {
-    setIsLoading(true);
-    setPhase('exercise');
-    setUserResponse('');
-    
-    const prompt = `
-      Book: "202 Useful Exercises for IELTS"
-      Current Exercise: ${currentExercise}
-      
-      Task: Provide the full text and questions for this exercise exactly as it appears in the book.
-      Follow the "SHOW ORIGINAL EXERCISE" and "FORCE THINKING" rules.
-      End with: "Try to answer. Tell me when you are ready."
-    `;
-
-    const response = await generateResponse(prompt, IELTS_SYSTEM_PROMPT);
-    setContent(response || "Failed to load exercise.");
-    setIsLoading(false);
+  const handleInputChange = (questionId: string, value: string) => {
+    if (showFeedback) return;
+    setAnswers(prev => ({ ...prev, [questionId]: value }));
   };
 
-  const handleEvaluate = async () => {
-    if (!userResponse.trim()) return;
-    setIsLoading(true);
-    
-    const prompt = `
-      Exercise: ${currentExercise}
-      User's Answer: "${userResponse}"
-      
-      Task: 
-      1. Provide the correct answers.
-      2. Explain why they are correct/wrong.
-      3. Provide Memory Reinforcement (key points + examples).
-      4. Provide Micro Revision (2-3 quick questions).
-    `;
-
-    const response = await generateResponse(prompt, IELTS_SYSTEM_PROMPT);
-    setContent(response || "Evaluation failed.");
-    setPhase('evaluation');
-    setIsLoading(false);
+  const normalizeAnswer = (str: string) => {
+    return str
+      .toLowerCase()
+      .trim()
+      .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "") // Remove punctuation
+      .replace(/\s{2,}/g, " "); // Remove extra spaces
   };
 
-  const handleNext = () => {
-    const parts = currentExercise.split('.');
-    const major = parseInt(parts[0]);
-    const minor = parseInt(parts[1]);
-    const nextMinor = minor + 1;
-    setCurrentExercise(`${major}.${nextMinor}`);
+  const validateAnswers = async () => {
+    const newResults: Record<string, boolean> = {};
+    let correctCount = 0;
+
+    exercise.questions.forEach(q => {
+      const userAnswer = normalizeAnswer(answers[q.id] || '');
+      const correctAnswer = normalizeAnswer(q.correctAnswer);
+      
+      const isCorrect = userAnswer === correctAnswer;
+      newResults[q.id] = isCorrect;
+      if (isCorrect) correctCount++;
+    });
+
+    setResults(newResults);
+    setScore(correctCount);
+    setShowFeedback(true);
+    
+    // Generate AI Tutor Feedback
+    setIsEvaluating(true);
+    try {
+      const prompt = `
+        You are an IELTS Tutor. The student just finished an exercise.
+        Exercise: ${exercise.title}
+        Skill: ${exercise.skill}
+        Score: ${correctCount} / ${exercise.questions.length}
+        
+        Questions and Answers:
+        ${exercise.questions.map(q => `
+          Q: ${q.text}
+          Student Answer: ${answers[q.id] || '(No answer)'}
+          Correct Answer: ${q.correctAnswer}
+          Result: ${newResults[q.id] ? 'Correct' : 'Incorrect'}
+        `).join('\n')}
+        
+        Task: Provide a short (2-3 sentences), encouraging, and constructive feedback summary. 
+        Highlight what they did well or what they should focus on next.
+      `;
+      const feedback = await generateResponse(prompt, "You are a supportive IELTS tutor.");
+      setTutorFeedback(feedback);
+    } catch (err) {
+      console.error("Failed to generate tutor feedback", err);
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  const handlePlayAudio = () => {
+    if (exercise.audioUrl) {
+      if (isPlaying) {
+        audioRef.current?.pause();
+      } else {
+        audioRef.current?.play();
+      }
+      setIsPlaying(!isPlaying);
+    } else {
+      // Fallback to TTS
+      const utterance = new SpeechSynthesisUtterance(exercise.content || exercise.title);
+      utterance.rate = 0.9;
+      utterance.onstart = () => setIsPlaying(true);
+      utterance.onend = () => setIsPlaying(false);
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      const progress = (audioRef.current.currentTime / audioRef.current.duration) * 100;
+      setAudioProgress(progress);
+    }
+  };
+
+  const getSkillColor = (skill: string) => {
+    switch (skill) {
+      case 'Listening': return 'bg-purple-50 text-purple-700 border-purple-100';
+      case 'Reading': return 'bg-blue-50 text-blue-700 border-blue-100';
+      case 'Writing': return 'bg-amber-50 text-amber-700 border-amber-100';
+      case 'Grammar': return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+      case 'Vocabulary': return 'bg-rose-50 text-rose-700 border-rose-100';
+      default: return 'bg-zinc-50 text-zinc-700 border-zinc-100';
+    }
   };
 
   return (
@@ -126,71 +161,209 @@ const ExerciseView: React.FC<ExerciseViewProps> = ({ onBack }) => {
           <ArrowLeft className="w-5 h-5 text-zinc-500" />
         </button>
         <div className="text-center">
-          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Exercise</p>
-          <h2 className="font-bold text-zinc-900">IELTS {currentExercise}</h2>
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border", getSkillColor(exercise.skill))}>
+              {exercise.skill}
+            </span>
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+              Exercise {exerciseIndex + 1} / {EXERCISES.length}
+            </span>
+          </div>
+          <h2 className="font-bold text-zinc-900">{exercise.title}</h2>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold uppercase tracking-widest">
-          <Book className="w-3 h-3" />
-          202 Exercises
+        <div className="flex items-center gap-2 px-3 py-1 bg-zinc-50 text-zinc-600 rounded-full text-xs font-bold border border-zinc-200">
+          <Zap className="w-3 h-3 text-amber-500" />
+          {exercise.subSkill}
         </div>
       </div>
 
       {/* Content Area */}
       <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden min-h-[500px] flex flex-col">
-        <div className="p-10 flex-1">
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-96 space-y-6">
-              <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
-              <p className="text-zinc-500 font-bold text-xl animate-pulse">Loading Exercise {currentExercise}...</p>
-            </div>
-          ) : (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-8"
-            >
-              <div className="markdown-body prose prose-zinc max-w-none">
-                <Markdown>{content}</Markdown>
-              </div>
-
-              {phase === 'exercise' && (
-                <div className="mt-12 space-y-6 pt-10 border-t border-zinc-100">
-                  <div className="space-y-4">
-                    <p className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Your Answers</p>
-                    <textarea
-                      value={userResponse}
-                      onChange={(e) => setUserResponse(e.target.value)}
-                      placeholder="Type your answers here (e.g., a. Edinburgh, b. Scotland...)"
-                      className="w-full h-40 p-6 bg-zinc-50 border border-zinc-200 rounded-[24px] focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all outline-none text-lg shadow-inner"
-                    />
-                  </div>
-
-                  <div className="flex justify-center">
-                    <button
-                      onClick={handleEvaluate}
-                      disabled={!userResponse.trim()}
-                      className="px-12 py-5 bg-zinc-900 text-white font-bold rounded-2xl hover:bg-zinc-800 disabled:opacity-50 transition-all flex items-center gap-3 shadow-xl"
-                    >
-                      <Sparkles className="w-5 h-5 text-blue-400" />
-                      Check My Answers
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {phase === 'evaluation' && (
-                <div className="mt-12 flex justify-center pt-10 border-t border-zinc-100">
-                  <button
-                    onClick={handleNext}
-                    className="px-12 py-5 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 transition-all flex items-center gap-3 shadow-xl shadow-blue-100"
+        <div className="p-10 flex-1 space-y-10">
+          {/* Exercise Content / Audio */}
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-zinc-800">Instructions</h3>
+              {(exercise.skill === 'Listening' || !exercise.audioUrl) && (
+                <div className="flex items-center gap-4">
+                  {exercise.audioUrl && (
+                    <div className="hidden sm:flex items-center gap-3 bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-100 min-w-[200px]">
+                      <div className="flex-1 h-1 bg-zinc-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-500 transition-all duration-300" 
+                          style={{ width: `${audioProgress}%` }}
+                        />
+                      </div>
+                      <Volume2 className="w-4 h-4 text-zinc-400" />
+                    </div>
+                  )}
+                  <button 
+                    onClick={handlePlayAudio}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-sm",
+                      isPlaying ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100"
+                    )}
                   >
-                    Next Exercise
-                    <ChevronRight className="w-6 h-6" />
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    {isPlaying ? "Stop" : (exercise.audioUrl ? "Play Audio" : "Read Aloud")}
                   </button>
                 </div>
               )}
-            </motion.div>
-          )}
+            </div>
+            
+            {exercise.audioUrl && (
+              <audio 
+                ref={audioRef} 
+                src={exercise.audioUrl} 
+                onEnded={() => {
+                  setIsPlaying(false);
+                  setAudioProgress(0);
+                }}
+                onTimeUpdate={handleTimeUpdate}
+                className="hidden"
+              />
+            )}
+
+            <div className="p-8 bg-zinc-50 rounded-[32px] border border-zinc-100 italic text-zinc-600 leading-relaxed text-lg relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full bg-blue-500/20" />
+              <Markdown>{exercise.content}</Markdown>
+            </div>
+          </div>
+
+          {/* Questions */}
+          <div className="space-y-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-zinc-800">Questions</h3>
+                <div className="px-2 py-0.5 bg-zinc-100 text-zinc-500 rounded-md text-[10px] font-bold uppercase">
+                  {Object.keys(answers).length} / {exercise.questions.length} Answered
+                </div>
+              </div>
+              {showFeedback && (
+                <div className="flex items-center gap-2 px-4 py-1.5 bg-zinc-900 text-white rounded-full text-sm font-bold shadow-lg">
+                  Score: {score} / {exercise.questions.length}
+                </div>
+              )}
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${(Object.keys(answers).length / exercise.questions.length) * 100}%` }}
+                className="h-full bg-blue-500"
+              />
+            </div>
+
+            <div className="space-y-6">
+              {exercise.questions.map((q, idx) => (
+                <div key={q.id} className="space-y-3">
+                  <div className="flex items-start gap-4">
+                    <div className="flex-1 space-y-3">
+                      <p className="text-zinc-700 font-medium">{q.text}</p>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={answers[q.id] || ''}
+                          onChange={(e) => handleInputChange(q.id, e.target.value)}
+                          disabled={showFeedback}
+                          placeholder="Your answer..."
+                          className={cn(
+                            "w-full px-6 py-4 rounded-2xl border transition-all outline-none font-medium",
+                            showFeedback 
+                              ? (results[q.id] 
+                                  ? "bg-emerald-50 border-emerald-200 text-emerald-700" 
+                                  : "bg-rose-50 border-rose-200 text-rose-700")
+                              : "bg-white border-zinc-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                          )}
+                        />
+                        {showFeedback && (
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                            {results[q.id] ? (
+                              <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                            ) : (
+                              <XCircle className="w-6 h-6 text-rose-500" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {showFeedback && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className={cn(
+                        "p-4 rounded-2xl text-sm space-y-2",
+                        results[q.id] ? "bg-emerald-50/50" : "bg-rose-50/50"
+                      )}
+                    >
+                      {!results[q.id] && (
+                        <p className="font-bold flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          Correct: <span className="text-emerald-700">{q.correctAnswer}</span>
+                        </p>
+                      )}
+                      {q.explanation && (
+                        <p className="text-zinc-600 flex items-start gap-2">
+                          <Info className="w-4 h-4 mt-0.5 text-zinc-400" />
+                          {q.explanation}
+                        </p>
+                      )}
+                    </motion.div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="pt-10 border-t border-zinc-100 space-y-8">
+            {showFeedback && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-blue-50/50 border border-blue-100 rounded-[32px] p-8 space-y-4"
+              >
+                <div className="flex items-center gap-3 text-blue-700 font-bold">
+                  <Sparkles className="w-5 h-5" />
+                  AI Tutor's Summary
+                </div>
+                {isEvaluating ? (
+                  <div className="flex items-center gap-3 text-zinc-400 animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Analyzing your performance...
+                  </div>
+                ) : (
+                  <p className="text-zinc-700 leading-relaxed">
+                    {tutorFeedback || "Great effort! Review the correct answers above to understand any mistakes."}
+                  </p>
+                )}
+              </motion.div>
+            )}
+
+            <div className="flex justify-center">
+              {!showFeedback ? (
+                <button
+                  onClick={validateAnswers}
+                  disabled={Object.keys(answers).length < exercise.questions.length}
+                  className="px-12 py-5 bg-zinc-900 text-white font-bold rounded-2xl hover:bg-zinc-800 disabled:opacity-50 transition-all flex items-center gap-3 shadow-xl"
+                >
+                  <Sparkles className="w-5 h-5 text-blue-400" />
+                  Check My Answers
+                </button>
+              ) : (
+                <button
+                  onClick={onComplete}
+                  className="px-12 py-5 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-500 transition-all flex items-center gap-3 shadow-xl shadow-blue-100"
+                >
+                  Next Exercise
+                  <ChevronRight className="w-6 h-6" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

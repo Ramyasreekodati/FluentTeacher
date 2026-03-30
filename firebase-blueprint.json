@@ -1,0 +1,97 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and progress tracking.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "level": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"] },
+        "currentLessonIndex": { "type": "integer" },
+        "currentExerciseIndex": { "type": "integer" },
+        "lastAssessmentSkill": { "type": "string", "enum": ["Grammar", "Speaking", "Reading", "Writing"] },
+        "completedLessons": { "type": "array", "items": { "type": "string" } },
+        "completedExercises": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["uid", "level"]
+    },
+    "DailyPlan": {
+      "title": "DailyPlan",
+      "description": "A structured daily learning plan for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "day": { "type": "integer" },
+        "learning": {
+          "type": "object",
+          "properties": {
+            "lesson_id": { "type": "string" },
+            "title": { "type": "string" }
+          }
+        },
+        "topic": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "focus": { "type": "string" },
+            "level": { "type": "string" },
+            "content_blocks": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "exercise": {
+          "type": "object",
+          "properties": {
+            "exercise_id": { "type": "string" },
+            "type": { "type": "string" },
+            "source": { "type": "string" }
+          }
+        },
+        "assessment": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "goal": { "type": "string" }
+          }
+        },
+        "completed": {
+          "type": "object",
+          "properties": {
+            "learning": { "type": "boolean" },
+            "topic": { "type": "boolean" },
+            "exercise": { "type": "boolean" },
+            "assessment": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "DailyTopic": {
+      "title": "DailyTopic",
+      "description": "AI-generated learning content for a specific topic.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "topic": { "type": "string" },
+        "content": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "topic", "content", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and progress."
+    },
+    "/dailyPlans/{planId}": {
+      "schema": "DailyPlan",
+      "description": "Daily learning plans indexed by userId_date."
+    },
+    "/dailyTopics/{topicId}": {
+      "schema": "DailyTopic",
+      "description": "Generated daily topics indexed by userId_date."
+    }
+  }
+}

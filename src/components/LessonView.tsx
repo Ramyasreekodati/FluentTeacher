@@ -25,6 +25,8 @@ import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 interface LessonViewProps {
   topic: Topic;
   progress: UserProgress;
+  stepIndex: number;
+  onStepComplete: (index: number) => void;
   onComplete: (scores: ComponentScore, accuracy: number) => void;
   onBack: () => void;
 }
@@ -42,8 +44,8 @@ interface Exercise {
   explanation: string;
 }
 
-export default function LessonView({ topic, progress, onComplete, onBack }: LessonViewProps) {
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+export default function LessonView({ topic, progress, stepIndex, onStepComplete, onComplete, onBack }: LessonViewProps) {
+  const [currentStepIndex, setCurrentStepIndex] = useState(stepIndex);
   const [stepContent, setStepContent] = useState<string | null>(null);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [userAnswers, setUserAnswers] = useState<Record<number, string>>({});
@@ -59,6 +61,10 @@ export default function LessonView({ topic, progress, onComplete, onBack }: Less
   const { isRecording, startRecording, stopRecording, audioBlob, setAudioBlob } = useVoiceRecorder();
 
   const currentStep = STEPS[currentStepIndex];
+
+  useEffect(() => {
+    setCurrentStepIndex(stepIndex);
+  }, [stepIndex]);
 
   useEffect(() => {
     fetchStepContent();
@@ -224,10 +230,10 @@ export default function LessonView({ topic, progress, onComplete, onBack }: Less
   );
 };
 
-const handleNext = () => {
-  if (currentStepIndex < STEPS.length - 1) {
-    setCurrentStepIndex(prev => prev + 1);
-  } else {
+  const handleNext = () => {
+    if (currentStepIndex < STEPS.length - 1) {
+      onStepComplete(currentStepIndex + 1);
+    } else {
     // Final Assessment Complete
     const avgAccuracy = sessionAccuracy.length > 0 
       ? sessionAccuracy.reduce((a, b) => a + b, 0) / sessionAccuracy.length 

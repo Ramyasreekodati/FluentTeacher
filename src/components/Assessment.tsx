@@ -21,19 +21,17 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
-import { UserProgress, ComponentScore } from '../types';
+import { UserProgress, ComponentScore, AssessmentType } from '../types';
 import { generateResponse, SYSTEM_INSTRUCTIONS } from '../services/gemini';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 
 interface AssessmentProps {
   progress: UserProgress;
   type?: AssessmentType;
-  onComplete: (scores: ComponentScore) => void;
+  onComplete: (scores: ComponentScore, mistakes?: any[]) => void;
   onExit?: () => void;
   onLockChange?: (isLocked: boolean) => void;
 }
-
-type AssessmentType = 'grammar' | 'vocabulary' | 'speaking' | 'reading' | 'writing' | 'grand' | 'weekly' | 'monthly' | null;
 
 const GRAMMAR_SUBTOPICS = [
   "Determiners", "Articles", "Parts of Speech", "Nouns", "Pronouns", "Adjectives", 
@@ -152,6 +150,24 @@ export default function Assessment({ progress, type, onComplete, onExit, onLockC
         - Speaking (1 prompt)
         
         Include a JSON block with 15 interactive exercises (mcq or fill) at the end.
+      `;
+    } else if (type === 'fluency') {
+      prompt = `
+        Level: ${progress.level}
+        Goal: Comprehensive Fluency Assessment
+        
+        Instructions:
+        1. Ask a series of questions covering:
+           - Grammar (e.g., complex sentence structures, tenses)
+           - Speaking (e.g., describe a complex scenario or express an opinion)
+           - Vocabulary (e.g., use of academic or professional terms)
+        2. Explain that you will score the user from 1-10.
+        3. Identify specific weak areas and offer tailored improvement advice.
+        4. Recommend specific practice resources.
+        
+        CRITICAL: 
+        - Provide 5 interactive exercises (mcq or fill) in a JSON block at the end.
+        - The exercises should test grammar and vocabulary.
       `;
     } else if (type === 'writing') {
       prompt = `
@@ -607,13 +623,25 @@ export default function Assessment({ progress, type, onComplete, onExit, onLockC
     setIsEvaluating(false);
     setIsSubmitted(true);
     
+    // Extract mistakes
+    let extractedMistakes: any[] = [];
+    const mistakesMatch = response?.match(/```json\s*([\s\S]*?)\s*```/);
+    if (mistakesMatch) {
+      try {
+        const data = JSON.parse(mistakesMatch[1]);
+        if (data.mistakes) extractedMistakes = data.mistakes;
+      } catch (e) {
+        console.error("Failed to parse mistakes JSON", e);
+      }
+    }
+
     // Extract score and update progress
     const scoreMatch = response?.match(/SCORE_SUMMARY:?\s*(\d+)/i);
     if (scoreMatch && assessmentType) {
       const score = parseInt(scoreMatch[1]);
       const newScores: Partial<ComponentScore> = {};
       
-      if (assessmentType === 'grand' || assessmentType === 'weekly' || assessmentType === 'monthly') {
+      if (assessmentType === 'grand' || assessmentType === 'weekly' || assessmentType === 'monthly' || assessmentType === 'fluency') {
         // For comprehensive tests, the score applies to all components
         newScores.grammar = score;
         newScores.vocabulary = score;
@@ -624,7 +652,7 @@ export default function Assessment({ progress, type, onComplete, onExit, onLockC
         // For specific skill tests, only update that skill
         newScores[assessmentType as keyof ComponentScore] = score;
       }
-      onComplete(newScores as ComponentScore);
+      onComplete(newScores as ComponentScore, extractedMistakes);
     }
   };
 
@@ -798,6 +826,7 @@ export default function Assessment({ progress, type, onComplete, onExit, onLockC
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
+              { id: 'fluency', label: 'Fluency Assessment', icon: Zap, color: 'text-amber-600', bg: 'bg-amber-50', desc: '1-10 scoring on grammar, speaking, and vocabulary.' },
               { id: 'grammar', label: 'Grammar Mastery', icon: Brain, color: 'text-blue-600', bg: 'bg-blue-50', desc: 'Tenses, structures, and complex grammar.' },
               { id: 'vocabulary', label: 'Vocabulary Bank', icon: BookOpen, color: 'text-emerald-600', bg: 'bg-emerald-50', desc: 'Oxford-level words and academic idioms.' },
               { id: 'speaking', label: 'Speaking Fluency', icon: Mic, color: 'text-orange-600', bg: 'bg-orange-50', desc: 'Pronunciation, clarity, and natural flow.' },
@@ -838,17 +867,16 @@ export default function Assessment({ progress, type, onComplete, onExit, onLockC
       {/* Header */}
       <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm">
         <button 
-          disabled={!isSubmitted}
           onClick={() => {
-            if (!isSubmitted) return;
-            setAssessmentType(null);
-            setSelectedSubTopic(null);
-            onLockChange?.(false);
+            if (type) {
+              onExit?.();
+            } else {
+              setAssessmentType(null);
+              setSelectedSubTopic(null);
+              onLockChange?.(false);
+            }
           }} 
-          className={cn(
-            "p-2 rounded-xl transition-colors",
-            !isSubmitted ? "opacity-50 cursor-not-allowed" : "hover:bg-zinc-100"
-          )}
+          className="p-2 rounded-xl transition-colors hover:bg-zinc-100"
         >
           <ArrowLeft className="w-5 h-5 text-zinc-500" />
         </button>

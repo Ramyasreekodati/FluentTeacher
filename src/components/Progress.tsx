@@ -22,13 +22,14 @@ import { generateResponse, SYSTEM_INSTRUCTIONS } from '../services/gemini';
 interface ProgressProps {
   progress: UserProgress;
   setProgress: React.Dispatch<React.SetStateAction<UserProgress>>;
+  onBack?: () => void;
 }
 
 function cn(...inputs: any[]) {
   return inputs.filter(Boolean).join(' ');
 }
 
-export default function Progress({ progress, setProgress }: ProgressProps) {
+export default function Progress({ progress, setProgress, onBack }: ProgressProps) {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const stats = [
@@ -90,9 +91,19 @@ export default function Progress({ progress, setProgress }: ProgressProps) {
   return (
     <div className="space-y-10 pb-20">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-4xl font-bold text-zinc-900 tracking-tight">Performance Analytics</h1>
-          <p className="text-zinc-500 mt-2 text-lg">Track your journey to IELTS excellence</p>
+        <div className="flex items-center gap-4">
+          {onBack && (
+            <button 
+              onClick={onBack}
+              className="p-3 hover:bg-zinc-100 rounded-2xl transition-colors"
+            >
+              <ChevronRight className="w-6 h-6 rotate-180" />
+            </button>
+          )}
+          <div>
+            <h1 className="font-display text-4xl font-bold text-zinc-900 tracking-tight">Performance Analytics</h1>
+            <p className="text-zinc-500 mt-2 text-lg">Track your journey to IELTS excellence</p>
+          </div>
         </div>
         <div className="px-8 py-4 bg-zinc-900 text-white rounded-[24px] font-bold flex items-center gap-3 shadow-xl">
           <Award className="w-6 h-6 text-emerald-400" />
@@ -305,6 +316,16 @@ export default function Progress({ progress, setProgress }: ProgressProps) {
                       <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Explanation</p>
                       <p className="text-zinc-600 leading-relaxed">{mistake.explanation}</p>
                     </div>
+                    {mistake.examples && mistake.examples.length > 0 && (
+                      <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
+                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Illustrative Examples</p>
+                        <ul className="list-disc list-inside space-y-2">
+                          {mistake.examples.map((ex, idx) => (
+                            <li key={idx} className="text-zinc-600 text-sm italic">"{ex}"</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

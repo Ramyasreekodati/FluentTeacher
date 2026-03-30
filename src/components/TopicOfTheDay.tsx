@@ -1,26 +1,80 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, BookOpen, Music, Headphones, Star, Send, ChevronRight, CheckCircle2, Layout, ListChecks, Type, Mic, Eye, Image as ImageIcon, AlertCircle, Trophy } from 'lucide-react';
+import { Sparkles, BookOpen, Music, Headphones, Star, Send, ChevronRight, CheckCircle2, Layout, ListChecks, Type, Mic, Eye, Image as ImageIcon, AlertCircle, Trophy, Loader2 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { db, auth } from '../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
 
-const TopicOfTheDay: React.FC = () => {
-  const [topic, setTopic] = useState('');
+function getAI() {
+  if (!aiInstance) {
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not set");
+    }
+    aiInstance = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  return aiInstance;
+}
+
+interface TopicOfTheDayProps {
+  onBack?: () => void;
+  onStartLesson?: (topic: any) => void;
+  onComplete?: () => void;
+  initialTopic?: string;
+}
+
+const TopicOfTheDay: React.FC<TopicOfTheDayProps> = ({ onBack, onStartLesson, onComplete, initialTopic }) => {
+  const [topic, setTopic] = useState(initialTopic || '');
   const [showExplanation, setShowExplanation] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sampleQuestions, setSampleQuestions] = useState<string | null>(null);
   const [mode, setMode] = useState<'generation' | 'learning'>('generation');
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  const today = new Date().toISOString().split('T')[0];
+  const userId = auth.currentUser?.uid;
+
+  useEffect(() => {
+    if (userId) {
+      fetchDailyTopic();
+    }
+  }, [userId]);
+
+  const fetchDailyTopic = async () => {
+    if (!userId) return;
+    setIsInitialLoading(true);
+    const docId = `${userId}_${today}`;
+    const path = `dailyTopics/${docId}`;
+    
+    try {
+      const docSnap = await getDoc(doc(db, 'dailyTopics', docId));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTopic(data.topic);
+        setSampleQuestions(data.content);
+        setShowExplanation(true);
+      } else if (initialTopic) {
+        setTopic(initialTopic);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, path);
+    } finally {
+      setIsInitialLoading(false);
+    }
+  };
 
   const handleGenerate = async () => {
+    const ai = getAI();
     const trimmedTopic = topic.trim();
     if (!trimmedTopic) {
       setSampleQuestions("Please provide a valid topic.");
@@ -38,11 +92,8 @@ const TopicOfTheDay: React.FC = () => {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `You are FluentTeacher AI.
-
-        Your task is to generate clean, structured, UI-ready learning content.
-
-        TOPIC: "${trimmedTopic}"
-
+        Your task is to generate clean, structured, UI-ready learning content for the topic: "${trimmedTopic}".
+        
         IMPORTANT RULES:
         - Output must be CLEAN and CARD-BASED
         - Each card must contain ONLY its own content
@@ -158,8 +209,21 @@ const TopicOfTheDay: React.FC = () => {
         No explanation. No extra text.`,
       });
       
-      if (response.text) {
-        setSampleQuestions(response.text);
+      const content = response.text || "";
+      if (content) {
+        setSampleQuestions(content);
+        
+        // Persist to Firestore
+        if (userId) {
+          const docId = `${userId}_${today}`;
+          await setDoc(doc(db, 'dailyTopics', docId), {
+            userId,
+            topic: trimmedTopic,
+            content,
+            date: today,
+            createdAt: new Date().toISOString()
+          });
+        }
       } else {
         throw new Error("Empty response");
       }
@@ -276,6 +340,17 @@ const TopicOfTheDay: React.FC = () => {
     setMode('learning');
   };
 
+  if (isInitialLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[600px] space-y-6">
+        <Loader2 className="w-16 h-16 text-emerald-600 animate-spin" />
+        <p className="text-zinc-500 font-bold text-xl animate-pulse text-center">
+          Checking your daily topic...
+        </p>
+      </div>
+    );
+  }
+
   if (mode === 'learning' && parsedContent) {
     return (
       <div className="max-w-6xl mx-auto p-6 space-y-12 pb-32">
@@ -286,7 +361,7 @@ const TopicOfTheDay: React.FC = () => {
         >
           <div className="flex items-center gap-4">
             <button 
-              onClick={() => setMode('generation')}
+              onClick={() => onBack ? onBack() : setMode('generation')}
               className="p-2 hover:bg-slate-100 rounded-full transition-colors"
             >
               <ChevronRight className="w-6 h-6 rotate-180" />
@@ -410,7 +485,10 @@ const TopicOfTheDay: React.FC = () => {
                 </div>
                 <p className="text-sm text-slate-500 font-medium">Keep going! You're 33% through this unit.</p>
               </div>
-              <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-colors">
+              <button 
+                onClick={onComplete}
+                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-colors"
+              >
                 Complete Daily Goal
               </button>
             </div>
@@ -422,6 +500,15 @@ const TopicOfTheDay: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-12 pb-32">
+      {onBack && (
+        <button 
+          onClick={onBack}
+          className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors mb-8 font-bold"
+        >
+          <ChevronRight className="w-5 h-5 rotate-180" />
+          Back to Dashboard
+        </button>
+      )}
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

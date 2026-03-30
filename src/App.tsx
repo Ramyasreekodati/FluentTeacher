@@ -10,13 +10,20 @@ import {
   Trophy,
   Sparkles,
   Zap,
-  Book
+  Book,
+  Calendar,
+  CheckCircle2,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { UserProgress, View, Topic, ComponentScore } from './types';
+import { UserProgress, View, Topic, ComponentScore, AssessmentType, DailyPlan } from './types';
 import { generateResponse, SYSTEM_INSTRUCTIONS } from './services/gemini';
+import { auth, db } from './firebase';
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 
 // Components
 import Dashboard from './components/Dashboard';
@@ -26,7 +33,10 @@ import Assessment from './components/Assessment';
 import Progress from './components/Progress';
 import ChatWidget from './components/ChatWidget';
 import TopicOfTheDay from './components/TopicOfTheDay';
+import LearningPlan from './components/LearningPlan';
+import AIEngine from './components/AIEngine';
 import ExerciseView from './components/ExerciseView';
+import DailyPractice from './components/DailyPractice';
 import { CURRICULUM } from './data/curriculum';
 
 function cn(...inputs: ClassValue[]) {
@@ -38,10 +48,13 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
-  const [assessmentType, setAssessmentType] = useState<'grammar' | 'vocabulary' | 'speaking' | 'reading' | 'writing' | 'grand' | 'weekly' | 'monthly' | null>(null);
+  const [activeDailyTask, setActiveDailyTask] = useState<keyof DailyPlan['completed'] | null>(null);
+  const [currentDailyPlan, setCurrentDailyPlan] = useState<DailyPlan | null>(null);
+  const [assessmentType, setAssessmentType] = useState<AssessmentType>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [loading, setLoading] = useState(true);
   
   const [progress, setProgress] = useState<UserProgress>(() => {
-    const saved = localStorage.getItem('fluent_teacher_progress_v2');
     const defaults: UserProgress = {
       level: 'Beginner',
       overallScore: 0,
@@ -67,23 +80,59 @@ export default function App() {
         speaking: [],
         writing: [],
         reading: []
-      }
+      },
+      currentLessonIndex: 0,
+      currentExerciseIndex: 0,
+      lastAssessmentSkill: 'Writing'
     };
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return { ...defaults, ...parsed };
-      } catch (e) {
-        console.error("Failed to parse progress", e);
-        return defaults;
-      }
-    }
     return defaults;
   });
 
+  // Auth Listener
   useEffect(() => {
-    localStorage.setItem('fluent_teacher_progress_v2', JSON.stringify(progress));
-  }, [progress]);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
+        // Fetch or create user progress in Firestore
+        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        if (userDoc.exists()) {
+          setProgress(userDoc.data() as UserProgress);
+        } else {
+          const initialProgress: UserProgress = {
+            ...progress,
+            lastActive: new Date().toISOString()
+          };
+          await setDoc(doc(db, 'users', firebaseUser.uid), initialProgress);
+          setProgress(initialProgress);
+        }
+      }
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Sync progress to Firestore
+  useEffect(() => {
+    if (user) {
+      const syncProgress = async () => {
+        try {
+          await setDoc(doc(db, 'users', user.uid), { ...progress }, { merge: true });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+        }
+      };
+      syncProgress();
+    }
+  }, [progress, user]);
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Login failed", error);
+    }
+  };
 
   // League Promotion Logic
   useEffect(() => {
@@ -123,6 +172,29 @@ export default function App() {
       }
     }
   }, []);
+
+  const handleDailyTaskComplete = async (taskType: keyof DailyPlan['completed']) => {
+    if (!user) return;
+    const today = new Date().toISOString().split('T')[0];
+    const planId = `${user.uid}_${today}`;
+    const planRef = doc(db, 'dailyPlans', planId);
+
+    try {
+      const planSnap = await getDoc(planRef);
+      if (planSnap.exists()) {
+        const currentPlan = planSnap.data() as DailyPlan;
+        const newCompleted = { ...currentPlan.completed, [taskType]: true };
+        await setDoc(planRef, { completed: newCompleted }, { merge: true });
+        
+        // Update user progress with specific daily task metadata if needed
+        if (taskType === 'assessment') {
+          setProgress(p => ({ ...p, lastAssessmentSkill: currentPlan.assessment.type }));
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `dailyPlans/${planId}`);
+    }
+  };
 
   const handleTopicComplete = (scores: ComponentScore, sessionAccuracy: number) => {
     if (!selectedTopic) return;
@@ -181,7 +253,10 @@ export default function App() {
         completedSessions: prev.completedSessions + 1,
         accuracy: newAccuracy,
         completion: newCompletion,
-        testPerformance: newTestPerformance
+        testPerformance: newTestPerformance,
+        currentLessonIndex: (prev.currentLessonIndex || 0) + 1,
+        currentLessonStepIndex: 0,
+        lastActive: new Date().toISOString()
       };
     });
 
@@ -189,7 +264,7 @@ export default function App() {
     setSelectedTopic(null);
   };
 
-  const handleAssessmentComplete = (scores: ComponentScore) => {
+  const handleAssessmentComplete = (scores: ComponentScore, mistakes?: any[]) => {
     setProgress(prev => {
       // Update Skill History
       const newSkillHistory = { ...prev.skillHistory };
@@ -199,6 +274,22 @@ export default function App() {
           newSkillHistory[k] = [...newSkillHistory[k], value];
         }
       });
+
+      // Update Mistakes
+      const newMistakes = [...prev.mistakes];
+      if (mistakes && mistakes.length > 0) {
+        mistakes.forEach(m => {
+          newMistakes.push({
+            id: Math.random().toString(36).substr(2, 9),
+            original: m.original,
+            corrected: m.corrected,
+            explanation: m.explanation,
+            rule: m.rule,
+            examples: m.examples,
+            status: 'active'
+          });
+        });
+      }
 
       // Calculate Component Scores (Average of History)
       const newComponentScores = { ...prev.componentScores };
@@ -222,19 +313,51 @@ export default function App() {
         skillHistory: newSkillHistory,
         componentScores: newComponentScores,
         overallScore: overall,
-        testPerformance: [...prev.testPerformance, overall]
+        mistakes: newMistakes,
+        testPerformance: [...prev.testPerformance, overall],
+        lastActive: new Date().toISOString()
       };
     });
   };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'daily_practice', label: 'Daily Practice', icon: CheckCircle2 },
     { id: 'curriculum', label: 'Learning Path', icon: BookOpen },
     { id: 'assessment', label: 'Assessment', icon: GraduationCap },
     { id: 'topic_of_the_day', label: 'Topic of the Day', icon: Sparkles },
+    { id: 'ai_engine', label: 'AI Engine', icon: Zap },
+    { id: 'learning_plan', label: 'Learning Plan', icon: Calendar },
     { id: 'exercise', label: 'Exercise', icon: Book },
     { id: 'progress', label: 'Performance', icon: BarChart3 },
   ];
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-zinc-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-zinc-50 p-6">
+        <div className="max-w-md w-full bg-white p-10 rounded-[40px] shadow-2xl text-center border border-zinc-200">
+          <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center text-white font-bold text-4xl mx-auto mb-8 shadow-xl shadow-emerald-900/20">F</div>
+          <h1 className="text-4xl font-display font-bold text-zinc-900 mb-4 tracking-tight">FluentTeacher AI</h1>
+          <p className="text-zinc-500 mb-10 text-lg leading-relaxed">Your advanced English fluency coach. Sign in to start your personalized learning journey.</p>
+          <button 
+            onClick={handleLogin}
+            className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold transition-all shadow-xl shadow-emerald-900/30 flex items-center justify-center gap-3"
+          >
+            Sign in with Google
+            <ArrowRight className="w-6 h-6" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-zinc-50 overflow-hidden">
@@ -265,6 +388,7 @@ export default function App() {
                   if (isLocked) return;
                   setActiveView(item.id as View);
                   setSelectedTopic(null);
+                  setAssessmentType(null);
                 }}
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all group",
@@ -333,6 +457,10 @@ export default function App() {
                 <Dashboard 
                   progress={progress} 
                   setView={setActiveView} 
+                  onStartAssessment={(type) => {
+                    setAssessmentType(type);
+                    setActiveView('assessment');
+                  }}
                 />
               )}
               {activeView === 'curriculum' && (
@@ -343,6 +471,10 @@ export default function App() {
                       setAssessmentType(topic.isMonthly ? 'monthly' : 'weekly');
                       setActiveView('assessment');
                     } else {
+                      const topicIndex = CURRICULUM.findIndex(t => t.id === topic.id);
+                      if (topicIndex !== progress.currentLessonIndex) {
+                        setProgress(prev => ({ ...prev, currentLessonStepIndex: 0 }));
+                      }
                       setSelectedTopic(topic);
                       setActiveView('lesson');
                     }
@@ -353,33 +485,148 @@ export default function App() {
                 <LessonView 
                   topic={selectedTopic} 
                   progress={progress} 
-                  onComplete={handleTopicComplete}
-                  onBack={() => setActiveView('curriculum')}
+                  stepIndex={progress.currentLessonStepIndex || 0}
+                  onStepComplete={(stepIndex) => {
+                    setProgress(prev => ({
+                      ...prev,
+                      currentLessonStepIndex: stepIndex
+                    }));
+                  }}
+                  onComplete={async (scores, accuracy) => {
+                    handleTopicComplete(scores, accuracy);
+                    if (activeDailyTask === 'learning' || activeDailyTask === 'topic') {
+                      await handleDailyTaskComplete(activeDailyTask);
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    }
+                  }}
+                  onBack={() => {
+                    if (activeDailyTask) {
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setActiveView('curriculum');
+                    }
+                  }}
                 />
               )}
               {activeView === 'assessment' && (
                 <Assessment 
                   progress={progress} 
                   type={assessmentType}
-                  onComplete={(scores) => {
-                    handleAssessmentComplete(scores);
+                  onComplete={async (scores, mistakes) => {
+                    handleAssessmentComplete(scores, mistakes);
+                    if (activeDailyTask === 'assessment') {
+                      await handleDailyTaskComplete('assessment');
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    }
                   }} 
                   onExit={() => {
-                    setAssessmentType(null);
-                    setActiveView('dashboard');
+                    if (activeDailyTask) {
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setAssessmentType(null);
+                      setActiveView('dashboard');
+                    }
                     setIsLocked(false);
                   }}
                   onLockChange={setIsLocked}
                 />
               )}
-              {activeView === 'progress' && (
-                <Progress progress={progress} setProgress={setProgress} />
+              {activeView === 'exercise' && (
+                <ExerciseView 
+                  exerciseIndex={progress.currentExerciseIndex || 0}
+                  onBack={() => {
+                    if (activeDailyTask) {
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setActiveView('dashboard');
+                    }
+                  }}
+                  onComplete={async () => {
+                    // Always increment exercise index on completion
+                    setProgress(p => ({ ...p, currentExerciseIndex: (p.currentExerciseIndex || 0) + 1 }));
+                    
+                    if (activeDailyTask === 'exercise') {
+                      await handleDailyTaskComplete('exercise');
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setActiveView('dashboard');
+                    }
+                  }}
+                />
               )}
               {activeView === 'topic_of_the_day' && (
-                <TopicOfTheDay />
+                <TopicOfTheDay 
+                  onBack={() => {
+                    if (activeDailyTask) {
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setActiveView('dashboard');
+                    }
+                  }}
+                  initialTopic={activeDailyTask === 'topic' ? currentDailyPlan?.topic.title : undefined}
+                  onComplete={async () => {
+                    if (activeDailyTask === 'topic') {
+                      await handleDailyTaskComplete('topic');
+                      setActiveDailyTask(null);
+                      setActiveView('daily_practice');
+                    } else {
+                      setActiveView('dashboard');
+                    }
+                  }}
+                />
               )}
-              {activeView === 'exercise' && (
-                <ExerciseView onBack={() => setActiveView('dashboard')} />
+              {activeView === 'daily_practice' && (
+                <DailyPractice 
+                  progress={progress}
+                  onBack={() => setActiveView('dashboard')}
+                  onStartTask={(taskType, id) => {
+                    if (taskType === 'learning') {
+                      const topic = CURRICULUM.find(t => t.id === id);
+                      if (topic) {
+                        setSelectedTopic(topic);
+                        setActiveDailyTask('learning');
+                        setActiveView('lesson');
+                      }
+                    } else if (taskType === 'exercise') {
+                      setActiveDailyTask('exercise');
+                      setActiveView('exercise');
+                    } else if (taskType === 'topic') {
+                      setActiveDailyTask('topic');
+                      setActiveView('topic_of_the_day');
+                    } else if (taskType === 'assessment') {
+                      setAssessmentType(id as AssessmentType);
+                      setActiveDailyTask('assessment');
+                      setActiveView('assessment');
+                    }
+                  }}
+                  onCompleteTask={handleDailyTaskComplete}
+                />
+              )}
+              {activeView === 'ai_engine' && (
+                <AIEngine 
+                  onBack={() => setActiveView('dashboard')}
+                  userLevel={progress.level}
+                />
+              )}
+              {activeView === 'learning_plan' && (
+                <LearningPlan 
+                  progress={progress}
+                  onBack={() => setActiveView('dashboard')}
+                />
+              )}
+              {activeView === 'progress' && (
+                <Progress 
+                  progress={progress}
+                  setProgress={setProgress}
+                  onBack={() => setActiveView('dashboard')}
+                />
               )}
             </motion.div>
           </AnimatePresence>

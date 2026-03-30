@@ -13,20 +13,22 @@ import {
   Brain,
   Mic,
   PenTool,
-  ChevronRight
+  ChevronRight,
+  Calendar
 } from 'lucide-react';
-import { UserProgress, View, ComponentScore } from '../types';
+import { UserProgress, View, ComponentScore, AssessmentType } from '../types';
 
 interface DashboardProps {
   progress: UserProgress;
   setView: (view: View) => void;
+  onStartAssessment?: (type: AssessmentType) => void;
 }
 
 function cn(...inputs: any[]) {
   return inputs.filter(Boolean).join(' ');
 }
 
-export default function Dashboard({ progress, setView }: DashboardProps) {
+export default function Dashboard({ progress, setView, onStartAssessment }: DashboardProps) {
   const stats = [
     { label: 'Streak', value: `${progress.streak} Days`, icon: Flame, color: 'text-orange-600', bg: 'bg-orange-50' },
     { label: 'Accuracy', value: `${progress.accuracy}%`, icon: Target, color: 'text-emerald-600', bg: 'bg-emerald-50' },
@@ -110,25 +112,100 @@ export default function Dashboard({ progress, setView }: DashboardProps) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Daily Practice Card */}
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="lg:col-span-1 bg-gradient-to-br from-emerald-600 to-emerald-900 p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden group cursor-pointer"
+          onClick={() => setView('daily_practice')}
+        >
+          <div className="relative z-10 h-full flex flex-col justify-between">
+            <div>
+              <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-md border border-white/10">
+                <CheckCircle2 className="w-8 h-8 text-emerald-300" />
+              </div>
+              <h3 className="font-display text-3xl font-bold mb-4 tracking-tight">Daily Practice</h3>
+              <p className="text-emerald-50 text-lg leading-relaxed mb-8 font-medium">
+                Complete your 4 daily tasks: Lesson, AI Topic, Exercise, and Assessment.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 font-bold text-white group-hover:gap-5 transition-all">
+              Start Practice
+              <ArrowRight className="w-6 h-6" />
+            </div>
+          </div>
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 blur-3xl rounded-full -mr-20 -mt-20 group-hover:bg-white/10 transition-colors"></div>
+        </motion.div>
+
+        {/* AI Engine Card */}
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="lg:col-span-1 bg-gradient-to-br from-indigo-800 to-indigo-950 p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden group cursor-pointer"
+          onClick={() => setView('ai_engine')}
+        >
+          <div className="relative z-10 h-full flex flex-col justify-between">
+            <div>
+              <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-md border border-white/10">
+                <Zap className="w-8 h-8 text-indigo-400" />
+              </div>
+              <h3 className="font-display text-3xl font-bold mb-4 tracking-tight">AI Learning Engine</h3>
+              <p className="text-zinc-400 text-lg leading-relaxed mb-8 font-medium">
+                Transform any raw resource or notes into a structured learning module.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 font-bold text-white group-hover:gap-5 transition-all">
+              Launch Engine
+              <ArrowRight className="w-6 h-6" />
+            </div>
+          </div>
+          <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 blur-3xl rounded-full -mr-20 -mt-20 group-hover:bg-indigo-500/10 transition-colors"></div>
+        </motion.div>
+
         {/* Topic of the Day Card */}
         <motion.div 
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="lg:col-span-1 bg-gradient-to-br from-emerald-600 to-teal-700 p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden group cursor-pointer"
+          className="lg:col-span-1 bg-gradient-to-br from-zinc-800 to-zinc-950 p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden group cursor-pointer"
           onClick={() => setView('topic_of_the_day')}
         >
           <div className="relative z-10 h-full flex flex-col justify-between">
             <div>
-              <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-md border border-white/20">
-                <Sparkles className="w-8 h-8 text-white" />
+              <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-md border border-white/10">
+                <Sparkles className="w-8 h-8 text-emerald-400" />
               </div>
-              <h3 className="font-display text-3xl font-bold mb-4 tracking-tight">English Topic of the Day</h3>
-              <p className="text-emerald-50 text-lg leading-relaxed mb-8 font-medium">
-                Enter any theme and we'll build a custom English learning unit just for you.
+              <h3 className="font-display text-3xl font-bold mb-4 tracking-tight">Topic of the Day</h3>
+              <p className="text-zinc-400 text-lg leading-relaxed mb-8 font-medium">
+                Custom English learning unit based on any theme you choose.
               </p>
             </div>
             <div className="flex items-center gap-3 font-bold text-white group-hover:gap-5 transition-all">
               Try it now
+              <ArrowRight className="w-6 h-6" />
+            </div>
+          </div>
+          <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 blur-3xl rounded-full -mr-20 -mt-20 group-hover:bg-emerald-500/10 transition-colors"></div>
+        </motion.div>
+
+        {/* Fluency Assessment Card */}
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="lg:col-span-1 bg-gradient-to-br from-amber-500 to-orange-600 p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden group cursor-pointer"
+          onClick={() => onStartAssessment?.('fluency')}
+        >
+          <div className="relative z-10 h-full flex flex-col justify-between">
+            <div>
+              <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-md border border-white/20">
+                <Zap className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="font-display text-3xl font-bold mb-4 tracking-tight">Fluency Test</h3>
+              <p className="text-amber-50 text-lg leading-relaxed mb-8 font-medium">
+                Get a detailed 1-10 score on your grammar, speaking, and vocabulary.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 font-bold text-white group-hover:gap-5 transition-all">
+              Start Assessment
               <ArrowRight className="w-6 h-6" />
             </div>
           </div>
